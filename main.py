@@ -102,8 +102,8 @@ async def outgoing_handler(websocket, path):
     logger.debug(f"outgoing_handler {threading.get_ident()}")
     message = {'type': 'heartbeat'}
     while True:
-        await asyncio.sleep(10)
-        logger.debug(f"just keeping connection alive!{threading.get_ident()}")
+        await asyncio.sleep(60)
+        logger.debug(f"heartbeat:{threading.get_ident()}")
         await websocket.send(json.dumps(message))
         
 
@@ -208,10 +208,14 @@ async def brain_N_one(pair):
                     if candle is not None:
                         logger.debug(f'New candle:{candle}')
                         logger.debug(f'Brain_N channels:{CHANNELS}')
-                        with concurrent.futures.ThreadPoolExecutor() as pool:
-                            signal = await asyncio.get_event_loop().run_in_executor(pool,worker,pair)
-                            if signal is not None:
-                                await notify(pair,signal,int(time.time()))
+                        if pair in CHANNELS:
+                            logger.debug(f"Some client waiting this channel {pair}")
+                            with concurrent.futures.ThreadPoolExecutor() as pool:
+                                signal = await asyncio.get_event_loop().run_in_executor(pool,worker,pair)
+                                if signal is not None:
+                                    await notify(pair,signal,int(time.time()))
+                        else:
+                            logger.debug(f"No clients waiting this channel not launch process {pair}")
         except Exception as e:
                 logger.error(f"Exception:{e}->{traceback.format_exc()}")
 
@@ -247,10 +251,15 @@ async def brain_N_all():
                     if candle is not None:
                         logger.debug(f'New candle:{candle}')
                         logger.debug(f'Brain_N channels:{CHANNELS}')
-                        with concurrent.futures.ThreadPoolExecutor() as pool:
-                            signal = await asyncio.get_event_loop().run_in_executor(pool,worker,candle['pair'])
-                            if signal is not None:
-                                await notify(candle['pair'],signal,int(time.time()))
+                        if candle['pair'] in CHANNELS:
+                            logger.debug(f"Some client waiting this channel {candle['pair']}")
+                            with concurrent.futures.ThreadPoolExecutor() as pool:
+                                signal = await asyncio.get_event_loop().run_in_executor(pool,worker,candle['pair'])
+                                if signal is not None:
+                                    await notify(candle['pair'],signal,int(time.time()))
+                        else:
+                            logger.debug(f"No clients waiting this channel not launch process: {candle['pair']}")
+
         except Exception as e:
                 logger.error(f"Exception:{e}->{traceback.format_exc()}")
 

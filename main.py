@@ -15,12 +15,13 @@ import os
 import sys
 import traceback
 from datetime import datetime
+from gemini import Gemini
 
 
 CACHE = defaultdict(tuple)
 CHANNELS = defaultdict(set)
 ALLOWED_CHANNELS = ("BTCUSD","LTCUSD","ETHUSD")
-GEMMINI_CHANNELS = ("BTCUSD","LTCUSD","ETHUSD")
+Gemini_CHANNELS = ("BTCUSD","LTCUSD","ETHUSD")
 GEMINI_CANDLES_TYPE = "candles_5m"
 
 def configure_logging(name,level = logging.DEBUG):
@@ -153,16 +154,16 @@ def worker(pair):
         return 'buy'
     return None
 
-def parse_gemmini_candle_response(response: dict) -> dict:
+def parse_gemini_candle_response(response: dict) -> dict:
 
     if type(response) == dict and all( (key in response for key in ['type',"symbol","changes"]) ):
         if response['type'] == GEMINI_CANDLES_TYPE + "_updates":
-            if response['symbol'] in GEMMINI_CHANNELS:
+            if response['symbol'] in Gemini_CHANNELS:
                 changes = list(response['changes'])
-                return parse_gemmini_candle(response['symbol'],changes[0])
+                return parse_gemini_candle(response['symbol'],changes[0])
     else:
         return None
-def parse_gemmini_candle(pair: str, candle: list) -> dict:
+def parse_gemini_candle(pair: str, candle: list) -> dict:
     if type(candle) == list and len(candle) == 6:
         new_candle = {}
         new_candle['source'] = "gemini"
@@ -179,6 +180,30 @@ def parse_gemmini_candle(pair: str, candle: list) -> dict:
     else:
         return None
 
+async def brain_N_one_with_class(pair):
+    logger.debug(f"brain_N_one_with_class")
+    while True:
+        try:
+            gemini = Gemini(pair)
+            await gemini.connect()
+            while True:
+                candle = await gemini.get_new_candle()
+                if candle is not None:
+                    logger.debug(f'New candle:{candle}')
+                    logger.debug(f'Brain_N channels:{CHANNELS}')
+                    if pair in CHANNELS:
+                        logger.debug(f"Some client waiting this channel {pair}")
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            signal = await asyncio.get_event_loop().run_in_executor(pool,worker,pair)
+                            if signal is not None:
+                                await notify(pair,signal,int(time.time()))
+                    else:
+                        logger.debug(f"No clients waiting this channel not launch process {pair}")
+        except Exception as e:
+             logger.error(f"Exception:{e}->{traceback.format_exc()}")
+             await asyncio.sleep(10)
+                
+  
 
 async def brain_N_one(pair):
     #always must be running catch all execptions
@@ -186,7 +211,7 @@ async def brain_N_one(pair):
 
     while True:
         try:
-            logger.debug(f"Starting connection with Gemmini:{pair}")
+            logger.debug(f"Starting connection with Gemini:{pair}")
             async with websockets.connect(ws_uri) as websocket:
                 data = {"type": "subscribe","subscriptions":[{"name":GEMINI_CANDLES_TYPE,"symbols":[pair]}]}
                 await websocket.send(json.dumps(data))
@@ -203,7 +228,7 @@ async def brain_N_one(pair):
                         break
                     else:
                         response = json.loads(r)
-                        candle = parse_gemmini_candle_response(response)
+                        candle = parse_gemini_candle_response(response)
 
                     if candle is not None:
                         logger.debug(f'New candle:{candle}')
@@ -219,7 +244,7 @@ async def brain_N_one(pair):
         except Exception as e:
                 logger.error(f"Exception:{e}->{traceback.format_exc()}")
 
-        logger.debug(f"Connection lost with Gemmini pair:{pair}")
+        logger.debug(f"Connection lost with Gemini pair:{pair}")
         await asyncio.sleep(5)
 
 
@@ -231,7 +256,7 @@ async def brain_N_all():
         try:
             logger.debug("Starting connection with Gemini")
             async with websockets.connect(ws_uri) as websocket:
-                data = {"type": "subscribe","subscriptions":[{"name":GEMINI_CANDLES_TYPE,"symbols":GEMMINI_CHANNELS}]}
+                data = {"type": "subscribe","subscriptions":[{"name":GEMINI_CANDLES_TYPE,"symbols":Gemini_CHANNELS}]}
                 await websocket.send(json.dumps(data))
                 while True:
                     try:
@@ -246,7 +271,7 @@ async def brain_N_all():
                         break
                     else:
                         response = json.loads(r)
-                        candle = parse_gemmini_candle_response(response)
+                        candle = parse_gemini_candle_response(response)
 
                     if candle is not None:
                         logger.debug(f'New candle:{candle}')
@@ -299,7 +324,8 @@ if __name__ == "__main__":
     logger.info(f"Start {threading.get_ident()}")
 
     ws_server = websockets.serve(handler,"localhost",8082)
-    tasks = [asyncio.get_event_loop().create_task(brain_N_one(pair)) for pair in ALLOWED_CHANNELS]
+    #tasks = [asyncio.get_event_loop().create_task(brain_N_one(pair)) for pair in ALLOWED_CHANNELS]
+    tasks = [asyncio.get_event_loop().create_task(brain_N_one_with_class(pair)) for pair in ALLOWED_CHANNELS]
     tasks.append(ws_server)
     #tasks.append(asyncio.get_event_loop().create_task(brain_N_all()))
     '''

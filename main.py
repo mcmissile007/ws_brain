@@ -7,7 +7,7 @@ import time
 import json
 import threading
 import functools
-from aiohttp import web  
+from aiohttp import web
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from config import Config
@@ -20,11 +20,12 @@ from gemini import Gemini
 
 CACHE = defaultdict(tuple)
 CHANNELS = defaultdict(set)
-ALLOWED_CHANNELS = ("BTCUSD","LTCUSD","ETHUSD")
-Gemini_CHANNELS = ("BTCUSD","LTCUSD","ETHUSD")
+ALLOWED_CHANNELS = ("BTCUSD", "LTCUSD", "ETHUSD")
+Gemini_CHANNELS = ("BTCUSD", "LTCUSD", "ETHUSD")
 GEMINI_CANDLES_TYPE = "candles_5m"
 
-def configure_logging(name,level = logging.DEBUG):
+
+def configure_logging(name, level=logging.DEBUG):
     # https://docs.python.org/3/howto/logging-cookbook.html
 
     logging.getLogger('websockets').setLevel(logging.INFO)
@@ -47,7 +48,7 @@ def configure_logging(name,level = logging.DEBUG):
     logger.info("Console logging configured OK")
 
     if (os.path.exists("./logs")):
-        filename = "./logs/" + name + "-" + str(int(time.time())) +".log"
+        filename = "./logs/" + name + "-" + str(int(time.time())) + ".log"
         file_hanlder = TimedRotatingFileHandler(
             filename, when="midnight", interval=1)
         file_hanlder.suffix = "%Y%m%d"
@@ -62,30 +63,34 @@ def configure_logging(name,level = logging.DEBUG):
     return logger
 
 
-async def notify(pair,action,epoch):
-    message = {'type':'signal' ,'action': action,'pair':pair,'epoch': epoch}
+async def notify(pair, action, epoch):
+    message = {'type': 'signal', 'action': action,
+               'pair': pair, 'epoch': epoch}
     logger.debug(f"notify {threading.get_ident()}")
     tasks = [client.send(json.dumps(message)) for client in CHANNELS[pair]]
     if tasks:
         await asyncio.wait(tasks)
 
-async def unsubscribe (websocket):
+
+async def unsubscribe(websocket):
 
     for pair in CHANNELS:
         CHANNELS[pair].discard(websocket)
-        
-    logger.debug(f"unsubscribe  CHANNELS:{CHANNELS}")       
 
-async def subscribe(websocket,pairs):
+    logger.debug(f"unsubscribe  CHANNELS:{CHANNELS}")
+
+
+async def subscribe(websocket, pairs):
     # do something with the message
     logger.debug(f"subscribe {threading.get_ident()}")
     for pair in pairs:
         CHANNELS[pair].add(websocket)
-    logger.debug(f"subscribe  CHANNELS:{CHANNELS}") 
+    logger.debug(f"subscribe  CHANNELS:{CHANNELS}")
+
 
 async def incoming_handler(websocket, path):
     logger.debug(f"incoming_handler {threading.get_ident()}")
-    try :
+    try:
         async for message in websocket:
             logger.debug(f"{websocket} : {path}")
             logger.debug(message)
@@ -94,10 +99,11 @@ async def incoming_handler(websocket, path):
                 logger.debug(f"pairs:{pairs}")
                 if type(pairs) == list and pairs:
                     logger.debug(f"Type list not empty")
-                    await subscribe(websocket,pairs)
+                    await subscribe(websocket, pairs)
     except Exception as e:
         logger.error(f"Exception in websocket message:{e}")
         return
+
 
 async def outgoing_handler(websocket, path):
     logger.debug(f"outgoing_handler {threading.get_ident()}")
@@ -106,7 +112,6 @@ async def outgoing_handler(websocket, path):
         await asyncio.sleep(60)
         logger.debug(f"heartbeat:{threading.get_ident()}")
         await websocket.send(json.dumps(message))
-        
 
 
 async def handler(websocket, path):
@@ -115,8 +120,8 @@ async def handler(websocket, path):
     inconming_task = asyncio.create_task(incoming_handler(websocket, path))
     outgoing_task = asyncio.create_task(outgoing_handler(websocket, path))
     done, pending = await asyncio.wait([inconming_task, outgoing_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+                                       return_when=asyncio.FIRST_COMPLETED,
+                                       )
 
     for task in done:
         try:
@@ -128,48 +133,52 @@ async def handler(websocket, path):
             else:
                 logger.debug("?")
         except Exception as e:
-                logger.error(f"Exception in done: {e}")
+            logger.error(f"Exception in done: {e}")
 
     for task in pending:
         logger.debug(f"Canceling:{task}")
         task.cancel()
-    
+
     logger.debug("End Handler")
 
 
 def worker(pair):
-    
+
     logger.debug(f"worker {pair}: {threading.get_ident()}")
-    CACHE[pair] = ("stay",int(time.time()))
-    time.sleep(random.randint(1,10))
+    CACHE[pair] = ("stay", int(time.time()))
+    time.sleep(random.randint(1, 10))
     guess = random.random()
     logger.debug(f"worker {pair}: guess:{guess}")
     if guess > 0.8:
-        CACHE[pair] = ("sell",int(time.time()))
+        CACHE[pair] = ("sell", int(time.time()))
         logger.debug(f"sell {pair}: by guess{guess}")
         return 'sell'
     if guess < 0.2:
-        CACHE[pair] = ("buy",int(time.time()))
+        CACHE[pair] = ("buy", int(time.time()))
         logger.debug(f"buy {pair}: by guess{guess}")
         return 'buy'
     return None
 
+
 def parse_gemini_candle_response(response: dict) -> dict:
 
-    if type(response) == dict and all( (key in response for key in ['type',"symbol","changes"]) ):
+    if type(response) == dict and all((key in response for key in ['type', "symbol", "changes"])):
         if response['type'] == GEMINI_CANDLES_TYPE + "_updates":
             if response['symbol'] in Gemini_CHANNELS:
                 changes = list(response['changes'])
-                return parse_gemini_candle(response['symbol'],changes[0])
+                return parse_gemini_candle(response['symbol'], changes[0])
     else:
         return None
+
+
 def parse_gemini_candle(pair: str, candle: list) -> dict:
     if type(candle) == list and len(candle) == 6:
         new_candle = {}
         new_candle['source'] = "gemini"
         new_candle['frame'] = GEMINI_CANDLES_TYPE.split("_")[1]
-        new_candle['epoch'] = int(candle[0]/1000) #in seconds
-        new_candle['date'] = datetime.utcfromtimestamp(new_candle['epoch']).strftime('%Y-%m-%d %H:%M:%S')
+        new_candle['epoch'] = int(candle[0]/1000)  # in seconds
+        new_candle['date'] = datetime.utcfromtimestamp(
+            new_candle['epoch']).strftime('%Y-%m-%d %H:%M:%S')
         new_candle['pair'] = str(pair)
         new_candle['open'] = float(candle[1])
         new_candle['high'] = float(candle[2])
@@ -179,6 +188,7 @@ def parse_gemini_candle(pair: str, candle: list) -> dict:
         return new_candle
     else:
         return None
+
 
 async def brain_N_one_with_class(pair):
     logger.debug(f"brain_N_one_with_class")
@@ -192,28 +202,32 @@ async def brain_N_one_with_class(pair):
                     logger.debug(f'New candle:{candle}')
                     logger.debug(f'Brain_N channels:{CHANNELS}')
                     if pair in CHANNELS:
-                        logger.debug(f"Some client waiting this channel {pair}")
+                        logger.debug(
+                            f"Some client waiting this channel {pair}")
                         with concurrent.futures.ThreadPoolExecutor() as pool:
-                            signal = await asyncio.get_event_loop().run_in_executor(pool,worker,pair)
+                            signal = await asyncio.get_event_loop().run_in_executor(pool, worker, pair)
                             if signal is not None:
-                                await notify(pair,signal,int(time.time()))
+                                await notify(pair, signal, int(time.time()))
                     else:
-                        logger.debug(f"No clients waiting this channel not launch process {pair}")
+                        logger.debug(
+                            f"No clients waiting this channel not launch process {pair}")
         except Exception as e:
-             logger.error(f"Exception:{e}->{traceback.format_exc()}")
-             await asyncio.sleep(10)
-                
-  
+            logger.error(f"Exception:{e}->{traceback.format_exc()}")
+            await asyncio.sleep(1)
+        logger.debug(f"Connection lost with Gemini pair:{pair}")
+        await asyncio.sleep(5)
+
 
 async def brain_N_one(pair):
-    #always must be running catch all execptions
+    # always must be running catch all execptions
     ws_uri = "wss://api.gemini.com/v2/marketdata"
 
     while True:
         try:
             logger.debug(f"Starting connection with Gemini:{pair}")
             async with websockets.connect(ws_uri) as websocket:
-                data = {"type": "subscribe","subscriptions":[{"name":GEMINI_CANDLES_TYPE,"symbols":[pair]}]}
+                data = {"type": "subscribe", "subscriptions": [
+                    {"name": GEMINI_CANDLES_TYPE, "symbols": [pair]}]}
                 await websocket.send(json.dumps(data))
                 while True:
                     try:
@@ -234,29 +248,32 @@ async def brain_N_one(pair):
                         logger.debug(f'New candle:{candle}')
                         logger.debug(f'Brain_N channels:{CHANNELS}')
                         if pair in CHANNELS:
-                            logger.debug(f"Some client waiting this channel {pair}")
+                            logger.debug(
+                                f"Some client waiting this channel {pair}")
                             with concurrent.futures.ThreadPoolExecutor() as pool:
-                                signal = await asyncio.get_event_loop().run_in_executor(pool,worker,pair)
+                                signal = await asyncio.get_event_loop().run_in_executor(pool, worker, pair)
                                 if signal is not None:
-                                    await notify(pair,signal,int(time.time()))
+                                    await notify(pair, signal, int(time.time()))
                         else:
-                            logger.debug(f"No clients waiting this channel not launch process {pair}")
+                            logger.debug(
+                                f"No clients waiting this channel not launch process {pair}")
         except Exception as e:
-                logger.error(f"Exception:{e}->{traceback.format_exc()}")
+            logger.error(f"Exception:{e}->{traceback.format_exc()}")
 
         logger.debug(f"Connection lost with Gemini pair:{pair}")
         await asyncio.sleep(5)
 
 
 async def brain_N_all():
-    #always must be running catch all execptions
+    # always must be running catch all execptions
     ws_uri = "wss://api.gemini.com/v2/marketdata"
-   
+
     while True:
         try:
             logger.debug("Starting connection with Gemini")
             async with websockets.connect(ws_uri) as websocket:
-                data = {"type": "subscribe","subscriptions":[{"name":GEMINI_CANDLES_TYPE,"symbols":Gemini_CHANNELS}]}
+                data = {"type": "subscribe", "subscriptions": [
+                    {"name": GEMINI_CANDLES_TYPE, "symbols": Gemini_CHANNELS}]}
                 await websocket.send(json.dumps(data))
                 while True:
                     try:
@@ -277,16 +294,18 @@ async def brain_N_all():
                         logger.debug(f'New candle:{candle}')
                         logger.debug(f'Brain_N channels:{CHANNELS}')
                         if candle['pair'] in CHANNELS:
-                            logger.debug(f"Some client waiting this channel {candle['pair']}")
+                            logger.debug(
+                                f"Some client waiting this channel {candle['pair']}")
                             with concurrent.futures.ThreadPoolExecutor() as pool:
-                                signal = await asyncio.get_event_loop().run_in_executor(pool,worker,candle['pair'])
+                                signal = await asyncio.get_event_loop().run_in_executor(pool, worker, candle['pair'])
                                 if signal is not None:
-                                    await notify(candle['pair'],signal,int(time.time()))
+                                    await notify(candle['pair'], signal, int(time.time()))
                         else:
-                            logger.debug(f"No clients waiting this channel not launch process: {candle['pair']}")
+                            logger.debug(
+                                f"No clients waiting this channel not launch process: {candle['pair']}")
 
         except Exception as e:
-                logger.error(f"Exception:{e}->{traceback.format_exc()}")
+            logger.error(f"Exception:{e}->{traceback.format_exc()}")
 
         logger.debug("Connection lost with Gemini")
         await asyncio.sleep(5)
@@ -294,6 +313,7 @@ async def brain_N_all():
 
 async def cache(request):
     return web.json_response(CACHE)
+
 
 async def state(request):
     res = {'state': 'OK', 'epoch': int(time.time())}
@@ -304,18 +324,20 @@ async def channels(request):
     res = [key for key in CHANNELS]
     return web.json_response(res)
 
+
 async def webserver():
     app = web.Application()
-    app.add_routes([web.get('/', state),web.get('/cache', cache),web.get('/channels', channels)])
+    app.add_routes([web.get('/', state), web.get('/cache',
+                                                 cache), web.get('/channels', channels)])
 
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 8081)
     await site.start()
     while True:
-        await asyncio.sleep(3600) #sleep forever waiting connections
+        await asyncio.sleep(3600)  # sleep forever waiting connections
     await runner.cleanup()
-    
+
 
 if __name__ == "__main__":
     logger = configure_logging(Config.LOGGING_NAME)
@@ -323,11 +345,12 @@ if __name__ == "__main__":
     logger.info("Start")
     logger.info(f"Start {threading.get_ident()}")
 
-    ws_server = websockets.serve(handler,"localhost",8082)
+    ws_server = websockets.serve(handler, "localhost", 8082)
     #tasks = [asyncio.get_event_loop().create_task(brain_N_one(pair)) for pair in ALLOWED_CHANNELS]
-    tasks = [asyncio.get_event_loop().create_task(brain_N_one_with_class(pair)) for pair in ALLOWED_CHANNELS]
+    tasks = [asyncio.get_event_loop().create_task(brain_N_one_with_class(pair))
+             for pair in ALLOWED_CHANNELS]
     tasks.append(ws_server)
-    #tasks.append(asyncio.get_event_loop().create_task(brain_N_all()))
+    # tasks.append(asyncio.get_event_loop().create_task(brain_N_all()))
     '''
     for pair in ALLOWED_CHANNELS:
         tasks.append( asyncio.get_event_loop().create_task( brain_N_one(pair) ) )
